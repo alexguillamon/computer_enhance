@@ -54,7 +54,6 @@ func getBits(b byte, start, end uint8) uint8 {
 
 	// Create a mask for the width
 	mask := uint8((1 << width) - 1)
-	printB(mask)
 
 	// Shift right to align the desired bits to the least significant position and apply the mask
 	return (b >> start) & mask
@@ -78,7 +77,7 @@ func printB(b byte) {
 }
 
 func main() {
-	fileName := "0040"
+	fileName := os.Args[1]
 	file, err := os.Open(fileName)
 	if err != nil {
 		return
@@ -117,12 +116,24 @@ Loop:
 			if err2 != nil {
 				break Loop
 			}
+
 			mod := getBits(b2, 6, 7)
 			reg := getBits(b2, 3, 5)
 			regm := getBits(b2, 0, 2)
+
+			regs, okreg := regField[byteOrWord][reg]
+			regms, okregm := regmField[regm]
+			if !okreg {
+				fmt.Printf("no mapping for reg %s, %b", inst, reg)
+				break Loop
+			}
+			if !okregm {
+				fmt.Printf("no mapping for regm %s, %b", inst, regm)
+				break Loop
+			}
+
 			switch mod {
 			case 0b11:
-				regs, okreg := regField[byteOrWord][reg]
 				regms, okregm := regField[byteOrWord][regm]
 				if !okreg || !okregm {
 					fmt.Printf("no mapping for reg %s, %b %b", inst, reg, regm)
@@ -131,19 +142,8 @@ Loop:
 
 				left = regs
 				right = regms
-			default:
-				regs, okreg := regField[byteOrWord][reg]
-				regms, okregm := regmField[regm]
-				if !okreg {
-					fmt.Printf("no mapping for reg %s, %b", inst, reg)
-					break Loop
-				}
-				if !okregm {
-					fmt.Printf("no mapping for regm %s, %b", inst, regm)
-					break Loop
-				}
-
-				if mod == 0b00 && regm == 0b110 {
+			case 0b00:
+				if regm == 0b110 {
 					b3, err3 := breader.ReadByte()
 					b4, err4 := breader.ReadByte()
 					if err3 != nil || err4 != nil {
@@ -158,33 +158,30 @@ Loop:
 					break
 				}
 
-				switch mod {
-				case 0b00:
-					left = regs
-					right = bracket(regms)
-				case 0b01:
-					b3, err := breader.ReadByte()
-					if err != nil {
-						fmt.Println(err)
-						break Loop
-					}
-					displ := fmt.Sprint(int8(b3))
-
-					left = regs
-					right = bracket(regms + " + " + displ)
-				case 0b10:
-					b3, err3 := breader.ReadByte()
-					b4, err4 := breader.ReadByte()
-					if err3 != nil || err4 != nil {
-						fmt.Println(err3)
-						fmt.Println(err4)
-						break Loop
-					}
-					displ := fmt.Sprintf("%d", int16(uint16(b4)<<8|uint16(b3)))
-
-					left = regs
-					right = bracket(regms + " + " + displ)
+				left = regs
+				right = bracket(regms)
+			case 0b01:
+				b3, err := breader.ReadByte()
+				if err != nil {
+					fmt.Println(err)
+					break Loop
 				}
+				displ := fmt.Sprint(int8(b3))
+
+				left = regs
+				right = bracket(regms + " + " + displ)
+			case 0b10:
+				b3, err3 := breader.ReadByte()
+				b4, err4 := breader.ReadByte()
+				if err3 != nil || err4 != nil {
+					fmt.Println(err3)
+					fmt.Println(err4)
+					break Loop
+				}
+				displ := fmt.Sprintf("%d", int16(uint16(b4)<<8|uint16(b3)))
+
+				left = regs
+				right = bracket(regms + " + " + displ)
 			}
 			if destination == 0b0 {
 				temp := left
@@ -228,20 +225,21 @@ Loop:
 				fmt.Printf("no mapping for regm %s, %b", inst, regm)
 				break Loop
 			}
-			if mod == 0b00 && regm == 0b110 {
-				b3, err3 := breader.ReadByte()
-				b4, err4 := breader.ReadByte()
-				if err3 != nil || err4 != nil {
-					fmt.Println(err3)
-					fmt.Println(err4)
-					break Loop
-				}
-				dirAdd := fmt.Sprintf("%d", uint16(b4)<<8|uint16(b3))
-
-				left = bracket(dirAdd)
-			}
 			switch mod {
 			case 0b00:
+				if regm == 0b110 {
+					b3, err3 := breader.ReadByte()
+					b4, err4 := breader.ReadByte()
+					if err3 != nil || err4 != nil {
+						fmt.Println(err3)
+						fmt.Println(err4)
+						break Loop
+					}
+					dirAdd := fmt.Sprintf("%d", uint16(b4)<<8|uint16(b3))
+
+					left = bracket(dirAdd)
+					break
+				}
 				left = bracket(regms)
 			case 0b01:
 				b3, err := breader.ReadByte()
@@ -307,6 +305,7 @@ Loop:
 		fmt.Print(line)
 		newfile += line
 	}
+
 	err = os.WriteFile("new"+fileName+".asm", ([]byte)(newfile), 0644)
 	if err != nil {
 		fmt.Println(err)
