@@ -100,43 +100,39 @@ Loop:
 
 		for i := 0; i < 5; i++ {
 			opInst, ok := bitsToInst[b1>>i]
-			inst = opInst
-			opCode = b1 >> i
-
 			if ok {
+				opCode = b1 >> i
+				inst = opInst
 				break
 			}
+		}
+		if inst == "" {
+			break Loop
+		}
+
+		byteOrWord := getBits(b1, 0, 0)
+		b2, err2 := breader.ReadByte()
+		if err2 != nil {
+			break Loop
+		}
+		mod := getBits(b2, 6, 7)
+		reg := getBits(b2, 3, 5)
+		regm := getBits(b2, 0, 2)
+		regs, okreg := regField[byteOrWord][reg]
+		regms, okregm := regmField[regm]
+		if !okreg || !okregm {
+			fmt.Printf("no mapping  inst %s, reg %b, regm %b", inst, reg, regm)
+			break Loop
 		}
 
 		switch opCode {
 		case 0b100010:
 			destination := getBits(b1, 1, 1)
-			byteOrWord := getBits(b1, 0, 0)
-			b2, err2 := breader.ReadByte()
-			if err2 != nil {
-				break Loop
-			}
-
-			mod := getBits(b2, 6, 7)
-			reg := getBits(b2, 3, 5)
-			regm := getBits(b2, 0, 2)
-
-			regs, okreg := regField[byteOrWord][reg]
-			regms, okregm := regmField[regm]
-			if !okreg {
-				fmt.Printf("no mapping for reg %s, %b", inst, reg)
-				break Loop
-			}
-			if !okregm {
-				fmt.Printf("no mapping for regm %s, %b", inst, regm)
-				break Loop
-			}
-
 			switch mod {
 			case 0b11:
 				regms, okregm := regField[byteOrWord][regm]
-				if !okreg || !okregm {
-					fmt.Printf("no mapping for reg %s, %b %b", inst, reg, regm)
+				if !okregm {
+					fmt.Printf("no mapping  inst %s, reg %b, regm %b", inst, reg, regm)
 					break Loop
 				}
 
@@ -191,17 +187,12 @@ Loop:
 		case 0b1011:
 			byteOrWord := getBits(b1, 3, 3)
 			reg := getBits(b1, 0, 2)
-			regs, okreg := regField[byteOrWord][reg]
-			if !okreg {
+			regs, ok := regField[byteOrWord][reg]
+			if !ok {
 				break Loop
 			}
 
-			var num uint16
-			b2, err := breader.ReadByte()
-			if err != nil {
-				break Loop
-			}
-			num = uint16(b2)
+			num := uint16(b2)
 			if byteOrWord == 0b1 {
 				b3, err := breader.ReadByte()
 				if err != nil {
@@ -211,20 +202,9 @@ Loop:
 				num = uint16(b3)<<8 | uint16(b2)
 			}
 			left = regs
-			right = bracket(fmt.Sprint(num))
+			right = fmt.Sprint(num)
+
 		case 0b1100011:
-			byteOrWord := getBits(b1, 0, 0)
-			b2, err2 := breader.ReadByte()
-			if err2 != nil {
-				break Loop
-			}
-			mod := getBits(b2, 6, 7)
-			regm := getBits(b2, 0, 2)
-			regms, okregm := regmField[regm]
-			if !okregm {
-				fmt.Printf("no mapping for regm %s, %b", inst, regm)
-				break Loop
-			}
 			switch mod {
 			case 0b00:
 				if regm == 0b110 {
@@ -283,16 +263,14 @@ Loop:
 
 		case 0b101000:
 			memToAcc := getBits(b1, 1, 1) == 0b0
-			byteOrWord := getBits(b1, 0, 0)
 			regs := regField[byteOrWord][0b000]
 
-			var dirAdd uint16
-			b2, err2 := breader.ReadByte()
-			b3, err3 := breader.ReadByte()
-			if err2 != nil || err3 != nil {
+			b3, err := breader.ReadByte()
+			if err != nil {
 				break Loop
 			}
-			dirAdd = uint16(b3)<<8 | uint16(b2)
+
+			dirAdd := uint16(b3)<<8 | uint16(b2)
 			left = regs
 			right = bracket(fmt.Sprint(dirAdd))
 			if !memToAcc {
@@ -301,6 +279,7 @@ Loop:
 				right = tmp
 			}
 		}
+
 		line := formatInst(inst, left, right)
 		fmt.Print(line)
 		newfile += line
