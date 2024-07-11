@@ -37,11 +37,11 @@ func (r *Register) Put(val uint16) {
 func (r *Register) String() string {
 	val := r.Get()
 	if r.rtype == Low {
-		return fmt.Sprintf("%s %b (lo)", r.Name, val)
+		return fmt.Sprintf("%s 0x%X (lo)", r.Name, val)
 	} else if r.rtype == High {
-		return fmt.Sprintf("%s %b (hi)", r.Name, val)
+		return fmt.Sprintf("%s 0x%X (hi)", r.Name, val)
 	} else {
-		return fmt.Sprintf("%s %b", r.Name, val)
+		return fmt.Sprintf("%s 0x%X", r.Name, val)
 	}
 }
 
@@ -66,6 +66,10 @@ var (
 	BP = Register{value: &[2]uint8{}, Name: "bp"}
 	SI = Register{value: &[2]uint8{}, Name: "si"}
 	DI = Register{value: &[2]uint8{}, Name: "di"}
+	ES = Register{value: &[2]uint8{}, Name: "es"}
+	CS = Register{value: &[2]uint8{}, Name: "cs"}
+	SS = Register{value: &[2]uint8{}, Name: "ss"}
+	DS = Register{value: &[2]uint8{}, Name: "ds"}
 
 	// Array of all registers
 	RegistersArray = []*Register{
@@ -85,17 +89,28 @@ var (
 		&BP,
 		&SI,
 		&DI,
+		&ES,
+		&CS,
+		&SS,
+		&DS,
 	}
 )
 
-func Get(bw, idx uint8) Register {
+func Get(bw, idx uint8) *Register {
 	if idx > 15 {
 		panic("idx is bigger than then number of registers")
 	}
 	if bw == 0b1 {
 		idx = 1<<3 | idx
 	}
-	return *RegistersArray[idx]
+	return RegistersArray[idx]
+}
+
+func GetSeg(idx uint8) *Register {
+	if idx > 3 {
+		panic("idx is bigger than then number of segment registers")
+	}
+	return RegistersArray[idx+16]
 }
 
 func Print() {

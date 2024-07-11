@@ -19,6 +19,7 @@ const (
 	BitsDataLo
 	BitsDataHi
 	BitsAddr
+	BitsSegReg
 )
 
 type Bit struct {
@@ -49,12 +50,16 @@ var (
 	ADDR      = Bit{Type: BitsAddr, Size: 16}
 	DATA      = Bit{Type: BitsDataLo, Size: 8}
 	DATA_IF_W = Bit{Type: BitsDataHi, Size: 8}
+	SR        = Bit{Type: BitsSegReg, Size: 2}
 )
 
 func ImplD(value byte) Bit {
 	return Bit{Type: BitsD, Size: 0, Value: value}
 }
 
+func ImplW(value byte) Bit {
+	return Bit{Type: BitsW, Size: 0, Value: value}
+}
 func ImplREG(value byte) Bit {
 	return Bit{Type: BitsREG, Size: 0, Value: value}
 }
@@ -78,6 +83,15 @@ const (
 	OpJmp
 )
 
+type ValueType uint8
+
+const (
+	ValNone ValueType = iota
+	ValRegister
+	ValMemory
+	ValImmediate
+)
+
 var opToString = map[OpType]string{
 	OpNone: "",
 	OpMov:  "mov",
@@ -92,15 +106,17 @@ type DecodeScheme struct {
 	Bits     []Bit
 }
 type Operation struct {
-	Op      OpType
-	Literal []Bit
+	OpType     OpType
+	Literal    []Bit
+	ValueTypes []ValueType
 
 	D,
 	S,
 	W,
-	RM,
-	REG,
 	MOD,
+	SR,
+	REG,
+	RM,
 	DISP_LO,
 	DISP_HI,
 	ADDR_LO,
@@ -110,16 +126,17 @@ type Operation struct {
 }
 
 var OpNotFound = Operation{
-	Op: OpNone,
+	OpType: OpNone,
 }
 
 var noOperation = DecodeScheme{OpNone, nil}
 
 var movRegMemReg = DecodeScheme{OpMov, []Bit{B("100010"), D, W, MOD, REG, RM}}
-var movImmedRegMem = DecodeScheme{OpMov, []Bit{B("1100011"), W, MOD, B("000"), RM, DATA, DATA_IF_W, ImplD(0)}}
-var movImmedReg = DecodeScheme{OpMov, []Bit{B("1011"), W, REG, DATA, DATA_IF_W, ImplD(1)}}
+var movImmedRegMem = DecodeScheme{OpMov, []Bit{B("1100011"), W, MOD, B("000"), RM, DATA, ImplD(0)}}
+var movImmedReg = DecodeScheme{OpMov, []Bit{B("1011"), W, REG, DATA, ImplD(1)}}
 var movMem2Acc = DecodeScheme{OpMov, []Bit{B("1010000"), W, ADDR, ImplD(1), ImplMOD(0), ImplREG(0)}}
 var movAcc2Mem = DecodeScheme{OpMov, []Bit{B("1010001"), W, ADDR, ImplD(0), ImplMOD(0), ImplREG(0)}}
+var movRegMemSeg = DecodeScheme{OpMov, []Bit{B("100011"), D, B("0"), MOD, B("0"), SR, RM, ImplW(1)}}
 
 var Table = map[uint8]DecodeScheme{
 	// Mov
@@ -127,28 +144,30 @@ var Table = map[uint8]DecodeScheme{
 	0b10001001: movRegMemReg,
 	0b10001010: movRegMemReg,
 	0b10001011: movRegMemReg,
-	0b10110000: movImmedRegMem,
-	0b10110001: movImmedRegMem,
-	0b10110010: movImmedRegMem,
-	0b10110011: movImmedRegMem,
-	0b10110100: movImmedRegMem,
-	0b10110101: movImmedRegMem,
-	0b10110110: movImmedRegMem,
-	0b10110111: movImmedRegMem,
-	0b10111000: movImmedRegMem,
-	0b10111001: movImmedRegMem,
-	0b10111010: movImmedRegMem,
-	0b10111011: movImmedRegMem,
-	0b10111100: movImmedRegMem,
-	0b10111101: movImmedRegMem,
-	0b10111110: movImmedRegMem,
-	0b10111111: movImmedRegMem,
-	0b11000110: movImmedReg,
-	0b11000111: movImmedReg,
+	0b10110000: movImmedReg,
+	0b10110001: movImmedReg,
+	0b10110010: movImmedReg,
+	0b10110011: movImmedReg,
+	0b10110100: movImmedReg,
+	0b10110101: movImmedReg,
+	0b10110110: movImmedReg,
+	0b10110111: movImmedReg,
+	0b10111000: movImmedReg,
+	0b10111001: movImmedReg,
+	0b10111010: movImmedReg,
+	0b10111011: movImmedReg,
+	0b10111100: movImmedReg,
+	0b10111101: movImmedReg,
+	0b10111110: movImmedReg,
+	0b10111111: movImmedReg,
+	0b11000110: movImmedRegMem,
+	0b11000111: movImmedRegMem,
 	0b10100000: movMem2Acc,
 	0b10100001: movMem2Acc,
 	0b10100010: movAcc2Mem,
 	0b10100011: movAcc2Mem,
+	0b10001110: movRegMemSeg,
+	0b10001100: movRegMemSeg,
 	// Add/Sub/Cmp
 	0b10000000: noOperation, // immedtoRegMem(""), // add,sub,cmp
 	0b10000001: noOperation, // immedtoRegMem(""), // add,sub,cmp
@@ -201,28 +220,29 @@ var Table = map[uint8]DecodeScheme{
 func Parse(b1 byte, br *bufio.Reader) (op Operation) {
 	decodeScheme, ok := Table[b1]
 	if !ok {
+		fmt.Printf("%b\n", b1)
 		panic("op code not found can't continue decoding")
 	}
 
-	op.Op = decodeScheme.Mnemonic
+	op.OpType = decodeScheme.Mnemonic
 
 	var currentByte = b1
 	var currentBit uint8 = 0
 	var bitsRead uint8 = 0
 	for _, bits := range decodeScheme.Bits {
-		if bitsRead == 8 {
+
+		if currentBit == 8 && bits.Size != 0 {
 			b, err := br.ReadByte()
 			if err != nil {
 				panic("Error reading byte")
 			}
 			currentByte = b
-		}
-
-		if currentBit == 8 {
 			currentBit = 0
 		}
 
-		bits.Value = readBits(currentByte, currentBit, bits.Size-1)
+		if bits.Size != 0 {
+			bits.Value = readBits(currentByte, 8-currentBit-bits.Size, 7-currentBit)
+		}
 		switch bits.Type {
 		case BitsLiteral:
 			op.Literal = append(op.Literal, bits)
@@ -234,6 +254,12 @@ func Parse(b1 byte, br *bufio.Reader) (op Operation) {
 			op.W = &bits
 		case BitsMOD:
 			op.MOD = &bits
+		case BitsREG:
+			op.REG = &bits
+			op.ValueTypes = append(op.ValueTypes, ValRegister)
+		case BitsSegReg:
+			op.SR = &bits
+			op.ValueTypes = append(op.ValueTypes, ValRegister)
 		case BitsRM:
 			op.RM = &bits
 			switch op.MOD.Value {
@@ -246,37 +272,42 @@ func Parse(b1 byte, br *bufio.Reader) (op Operation) {
 					}
 					op.ADDR_LO.Value = bLo
 					op.ADDR_HI.Value = bHi
+
+					op.ValueTypes = append(op.ValueTypes, ValMemory)
+				} else {
+					op.ValueTypes = append(op.ValueTypes, ValRegister)
+
 				}
 			case 0b01:
 				b, err := br.ReadByte()
 				if err != nil {
 					panic(fmt.Sprintf("%v", err))
 				}
-				op.DISP_LO.Value = b
+				op.DISP_LO = &Bit{Type: BitsDisp, Value: b}
+				op.ValueTypes = append(op.ValueTypes, ValRegister)
 			case 0b10:
 				bLo, errLo := br.ReadByte()
 				bHi, errHi := br.ReadByte()
 				if errLo != nil || errHi != nil {
 					panic(fmt.Sprintf("%v, %v", errLo, errHi))
 				}
-				op.DISP_LO.Value = bLo
-				op.DISP_HI.Value = bHi
+				op.DISP_LO = &Bit{Type: BitsDisp, Value: bLo}
+				op.DISP_HI = &Bit{Type: BitsDisp, Value: bHi}
+				op.ValueTypes = append(op.ValueTypes, ValRegister)
+			case 0b11:
+				op.ValueTypes = append(op.ValueTypes, ValRegister)
 			}
-		case BitsREG:
-			op.REG = &bits
 		case BitsDataLo:
-			b, err := br.ReadByte()
-			if err != nil {
-				panic(fmt.Sprintf("%v", err))
-			}
-			op.DATA_LO.Value = b
-		case BitsDataHi:
+			op.DATA_LO = &Bit{Type: BitsDataLo, Value: currentByte}
+
+			op.ValueTypes = append(op.ValueTypes, ValImmediate)
 			if op.W.Value == 0b1 {
-				b, err := br.ReadByte()
-				if err != nil {
-					panic(fmt.Sprintf("%v", err))
+				bHi, errHi := br.ReadByte()
+				if errHi != nil {
+					panic(fmt.Sprintf("%v", errHi))
+
 				}
-				op.DATA_HI.Value = b
+				op.DATA_HI = &Bit{Type: BitsDataHi, Value: bHi}
 			}
 		case BitsAddr:
 			bLo, errLo := br.ReadByte()
@@ -284,8 +315,10 @@ func Parse(b1 byte, br *bufio.Reader) (op Operation) {
 			if errLo != nil || errHi != nil {
 				panic(fmt.Sprintf("%v, %v", errLo, errHi))
 			}
-			op.ADDR_LO.Value = bLo
-			op.ADDR_HI.Value = bHi
+			op.ADDR_LO = &Bit{Type: BitsAddr, Value: bLo}
+			op.ADDR_HI = &Bit{Type: BitsAddr, Value: bHi}
+
+			op.ValueTypes = append(op.ValueTypes, ValMemory)
 		}
 
 		currentBit += bits.Size

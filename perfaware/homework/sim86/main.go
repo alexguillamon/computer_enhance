@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sim86/instructions"
 	"sim86/registers"
 )
 
@@ -234,26 +235,98 @@ func main() {
 
 	br := bufio.NewReader(file)
 	newfile := "bits 16\n"
-
+loop:
 	for {
-		b1, err1 := br.ReadByte()
-		b2, err2 := br.ReadByte()
-		if err1 != nil || err2 != nil {
-			if err1 == io.EOF {
+		b1, err := br.ReadByte()
+		if err != nil {
+			if err == io.EOF {
 				break
 			}
-			newfile += fmt.Sprintf("error parsing bytes 1&2: %v, %v", err1, err2)
+			newfile += fmt.Sprintf("error parsing bytes 1: %v", err)
 			break
 		}
+		op := instructions.Parse(b1, br)
+		switch op.OpType {
+		case instructions.OpNone:
+			fmt.Printf("%b\n", b1)
+			fmt.Println("hit here")
+			break loop
+		case instructions.OpMov:
+			first := op.ValueTypes[0]
+			second := op.ValueTypes[1]
+			var loc1 *registers.Register
+			var loc2 *registers.Register
+			var value uint16
+			switch first {
+			case instructions.ValMemory:
+			case instructions.ValRegister:
+				if op.SR != nil {
+					loc1 = registers.GetSeg(op.SR.Value)
+				} else {
 
-		opInst, ok := instructionLookup[b1]
-		if ok {
-			inst := opInst([]byte{b1, b2}, br)
-			fmt.Print(inst)
-			newfile += inst
+					loc1 = registers.Get(op.W.Value, op.REG.Value)
+				}
+				switch second {
+				case instructions.ValImmediate:
+					if op.W.Value == 0 {
+						value = uint16(op.DATA_LO.Value)
+					} else {
+						value = uint16(op.DATA_HI.Value)<<8 | uint16(op.DATA_LO.Value)
+
+					}
+				case instructions.ValRegister:
+					switch op.MOD.Value {
+					case 0b11:
+						loc2 = registers.Get(op.W.Value, op.RM.Value)
+						if op.D.Value == 0 {
+							tmp := loc1
+							loc1 = loc2
+							loc2 = tmp
+						}
+						value = loc2.Get()
+					case 0b00:
+						// if regm == 0b110 {
+						// 	b3, err3 := br.ReadByte()
+						// 	b4, err4 := br.ReadByte()
+						// 	if err3 != nil || err4 != nil {
+						// 		return fmt.Sprintf("%v, %v", err3, err4)
+						// 	}
+						// 	dirAdd := fmt.Sprintf("%d", uint16(b4)<<8|uint16(b3))
+						//
+						// 	right = bracket(dirAdd)
+						// 	break
+						// }
+
+						// right =
+					case 0b01:
+						// b3, err := br.ReadByte()
+						// if err != nil {
+						// 	return fmt.Sprint(err)
+						// }
+						// displ := fmt.Sprint(int8(b3))
+						//
+						// right = bracket(regms + " + " + displ)
+					case 0b10:
+						// b3, err3 := br.ReadByte()
+						// b4, err4 := br.ReadByte()
+						// if err3 != nil || err4 != nil {
+						// 	return fmt.Sprintf("%v, %v", err3, err4)
+						// }
+						// displ := fmt.Sprintf("%d", int16(uint16(b4)<<8|uint16(b3)))
+						//
+						// right = bracket(regms + " + " + displ)
+					}
+				}
+			case instructions.ValNone:
+			case instructions.ValImmediate:
+
+			}
+			// fmt.Println(loc1.Name)
+			// fmt.Println(value)
+			loc1.Put(value)
 		}
+
 	}
-	fmt.Println()
 	registers.Print()
 	dir := filepath.Dir(fileName)
 	newFileName := filepath.Join(dir, "new"+filepath.Base(fileName)+".asm")
@@ -351,4 +424,42 @@ func formatInst(inst, left, right string) string {
 		left,
 		right,
 	)
+}
+func oldMain() {
+	fileName := os.Args[1]
+	file, err := os.Open(fileName)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+
+	br := bufio.NewReader(file)
+	newfile := "bits 16\n"
+
+	for {
+		b1, err1 := br.ReadByte()
+		b2, err2 := br.ReadByte()
+		if err1 != nil || err2 != nil {
+			if err1 == io.EOF {
+				break
+			}
+			newfile += fmt.Sprintf("error parsing bytes 1&2: %v, %v", err1, err2)
+			break
+		}
+
+		opInst, ok := instructionLookup[b1]
+		if ok {
+			inst := opInst([]byte{b1, b2}, br)
+			fmt.Print(inst)
+			newfile += inst
+		}
+	}
+	fmt.Println()
+	registers.Print()
+	dir := filepath.Dir(fileName)
+	newFileName := filepath.Join(dir, "new"+filepath.Base(fileName)+".asm")
+	err = os.WriteFile(newFileName, ([]byte)(newfile), 0644)
+	if err != nil {
+		fmt.Println(err)
+	}
 }
